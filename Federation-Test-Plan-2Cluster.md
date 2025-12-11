@@ -210,11 +210,42 @@ oc get clusterfederatedtrustdomains -o wide
 
 Before executing tests, ensure:
 
-- [ ] Both clusters have Zero Trust Workload Identity Manager operator installed
-- [ ] Operator CSV shows "Succeeded" status
-- [ ] SPIRE components are running on both clusters
-- [ ] Network connectivity between clusters
-- [ ] Kubeconfig files available for both clusters
+- [x] Both clusters have Zero Trust Workload Identity Manager operator installed ✅ **Verified Dec 11, 2025**
+- [x] Operator CSV shows "Succeeded" status ✅ **Verified Dec 11, 2025**
+- [x] SPIRE components are running on both clusters ✅ **Verified Dec 11, 2025**
+- [x] Network connectivity between clusters ✅ **Verified Dec 11, 2025**
+- [x] Kubeconfig files available for both clusters ✅ **Verified Dec 11, 2025**
+
+### Verification Commands (Run on Each Cluster)
+
+```bash
+# Step 1: Set namespace variable
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+# Step 2: Check operator status
+echo "=== Operator CSV Status ==="
+oc get csv -n $SPIRE_NS | grep zero-trust
+# Expected: Shows "Succeeded" in PHASE column
+
+# Step 3: Check all SPIRE pods
+echo ""
+echo "=== SPIRE Pods ==="
+oc get pods -n $SPIRE_NS
+# Expected: All pods show "Running" status
+
+# Step 4: Verify SPIRE server health
+echo ""
+echo "=== SPIRE Server Health ==="
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server healthcheck
+# Expected: "Server is healthy."
+
+# Step 5: Get trust domain
+echo ""
+echo "=== Trust Domain ==="
+export APP_DOMAIN=$(oc get dns cluster -o jsonpath='{ .spec.baseDomain }')
+export APP_DOMAIN="apps.${APP_DOMAIN}"
+echo "Trust Domain: $APP_DOMAIN"
+```
 
 ### Verify Prerequisites Script
 
@@ -585,10 +616,28 @@ oc --kubeconfig="$KUBECONFIG2" exec -n $SPIRE_NS spire-server-0 -c spire-server 
 ```
 
 #### Pass Criteria
-- [ ] Both federation routes exist and are accessible
-- [ ] `curl -k` returns valid JWKS JSON from both endpoints
-- [ ] Bundle list on Cluster 1 shows Cluster 2's trust domain
-- [ ] Bundle list on Cluster 2 shows Cluster 1's trust domain
+- [x] Both federation routes exist and are accessible ✅
+- [x] `curl -k` returns valid JWKS JSON from both endpoints ✅
+- [x] Bundle list on Cluster 1 shows Cluster 2's trust domain ✅
+- [x] Bundle list on Cluster 2 shows Cluster 1's trust domain ✅
+
+#### Test Result: ✅ PASS (December 10-11, 2025)
+
+**Retest Commands:**
+```bash
+# On Cluster 1 - Verify federation
+export SPIRE_NS="zero-trust-workload-identity-manager"
+export APP_DOMAIN2="<CLUSTER2_TRUST_DOMAIN>"  # Replace with actual value
+
+# Check ClusterFederatedTrustDomain exists
+oc get clusterfederatedtrustdomains -o wide
+
+# Verify bundle list shows Cluster 2
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle list
+
+# Test federation endpoint
+curl -k -s https://federation.${APP_DOMAIN2} | head -c 300
+```
 
 ---
 
@@ -699,10 +748,29 @@ curl -k -s https://federation.$APP_DOMAIN1 | jq '.keys | length'
 ```
 
 #### Pass Criteria
-- [ ] Route `spire-server-federation` is automatically created
-- [ ] Route hostname is `federation.<APP_DOMAIN>`
-- [ ] Route uses passthrough TLS termination
-- [ ] Endpoint returns valid JWKS JSON
+- [x] Route `spire-server-federation` is automatically created ✅
+- [x] Route hostname is `federation.<APP_DOMAIN>` ✅
+- [x] Route uses passthrough TLS termination ✅
+- [x] Endpoint returns valid JWKS JSON ✅
+
+#### Test Result: ✅ PASS (December 10-11, 2025)
+
+**Retest Commands:**
+```bash
+export SPIRE_NS="zero-trust-workload-identity-manager"
+export APP_DOMAIN=$(oc get dns cluster -o jsonpath='{ .spec.baseDomain }')
+export APP_DOMAIN="apps.${APP_DOMAIN}"
+
+# Verify route exists
+oc get route spire-server-federation -n $SPIRE_NS -o wide
+
+# Check route TLS termination
+oc get route spire-server-federation -n $SPIRE_NS -o jsonpath='{.spec.tls.termination}'
+# Expected: passthrough
+
+# Test endpoint
+curl -k -s https://federation.${APP_DOMAIN} | head -c 300
+```
 
 ---
 
@@ -745,9 +813,28 @@ curl -k https://federation.$APP_DOMAIN1 | head -c 100
 ```
 
 #### Pass Criteria
-- [ ] Route is automatically recreated after deletion
-- [ ] Recreated route has same configuration
-- [ ] Federation endpoint works after recreation
+- [x] Route is automatically recreated after deletion ✅
+- [x] Recreated route has same configuration ✅
+- [x] Federation endpoint works after recreation ✅
+
+#### Test Result: ✅ PASS (December 10, 2025)
+
+**Retest Commands:**
+```bash
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+# Delete the route
+oc delete route spire-server-federation -n $SPIRE_NS
+
+# Wait for recreation (operator reconciles)
+sleep 30
+
+# Verify route is recreated
+oc get route spire-server-federation -n $SPIRE_NS -o wide
+
+# Test endpoint still works
+curl -k -s https://federation.${APP_DOMAIN} | head -c 200
+```
 
 ---
 
@@ -897,10 +984,28 @@ cat /tmp/bundle-response.json | jq '.keys[] | select(.use == "x509-svid") | .use
 ```
 
 #### Pass Criteria
-- [ ] Endpoint returns HTTP 200
-- [ ] Response is valid JSON
-- [ ] Response contains `keys` array with at least 1 entry
-- [ ] At least one key has `use: "x509-svid"`
+- [x] Endpoint returns HTTP 200 ✅
+- [x] Response is valid JSON ✅
+- [x] Response contains `keys` array with at least 1 entry ✅
+- [x] At least one key has `use: "x509-svid"` ✅
+
+#### Test Result: ✅ PASS (December 10, 2025)
+
+**Retest Commands:**
+```bash
+export APP_DOMAIN=$(oc get dns cluster -o jsonpath='{ .spec.baseDomain }')
+export APP_DOMAIN="apps.${APP_DOMAIN}"
+
+# Test endpoint accessibility
+curl -k -s -o /dev/null -w "%{http_code}" https://federation.${APP_DOMAIN}
+# Expected: 200
+
+# Get full JSON response
+curl -k -s https://federation.${APP_DOMAIN} | python3 -m json.tool
+
+# Check for x509-svid key
+curl -k -s https://federation.${APP_DOMAIN} | python3 -c "import sys,json; d=json.load(sys.stdin); print('Keys:', len(d.get('keys',[])), '| Has x509-svid:', any(k.get('use')=='x509-svid' for k in d.get('keys',[])))"
+```
 
 ---
 
@@ -922,9 +1027,23 @@ oc get svc spire-server -n $SPIRE_NS -o yaml | grep -A 10 "ports:"
 ```
 
 #### Pass Criteria
-- [ ] Service has port 8443 exposed
-- [ ] Port name is "federation"
-- [ ] Target port is 8443
+- [x] Service has port 8443 exposed ✅
+- [x] Port name is "federation" ✅
+- [x] Target port is 8443 ✅
+
+#### Test Result: ✅ PASS (December 10, 2025)
+
+**Retest Commands:**
+```bash
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+# Check service ports
+oc get svc spire-server -n $SPIRE_NS -o yaml | grep -A 15 "ports:"
+
+# Verify federation port specifically
+oc get svc spire-server -n $SPIRE_NS -o jsonpath='{.spec.ports[?(@.name=="federation")]}' | python3 -m json.tool
+# Expected: port: 8443, targetPort: 8443
+```
 
 ---
 
@@ -2228,9 +2347,40 @@ oc delete clusterfederatedtrustdomain test-wrong-classname
 ```
 
 #### Pass Criteria
-- [ ] Wrong className does NOT add bundle to SPIRE
-- [ ] Correct className properly adds bundle to SPIRE
-- [ ] No crash or error in operator
+- [x] Wrong className does NOT add bundle to SPIRE ✅
+- [x] Correct className properly adds bundle to SPIRE ✅
+- [x] No crash or error in operator ✅
+
+#### Test Result: ✅ PASS (December 10, 2025)
+
+**Retest Commands:**
+```bash
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+# Create CR with WRONG className
+oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterFederatedTrustDomain
+metadata:
+  name: test-wrong-classname
+spec:
+  trustDomain: test.wrong.classname.com
+  bundleEndpointURL: https://federation.test.wrong.classname.com
+  bundleEndpointProfile:
+    type: https_spiffe
+    endpointSPIFFEID: spiffe://test.wrong.classname.com/spire/server
+  className: wrong-class-name  # WRONG!
+  trustDomainBundle: |
+    {"keys":[{"kty":"RSA","n":"test","e":"AQAB","use":"x509-svid"}]}
+EOF
+
+# Check bundle list - should NOT contain the wrong className domain
+sleep 10
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle list
+
+# Cleanup
+oc delete clusterfederatedtrustdomain test-wrong-classname --ignore-not-found
+```
 
 ---
 

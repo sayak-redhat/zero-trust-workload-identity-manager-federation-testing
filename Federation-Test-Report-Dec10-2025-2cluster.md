@@ -350,6 +350,65 @@ Error: cannot delete bundle; federated with 1 registration entries
 
 ---
 
+## How to Retest (Quick Verification Commands)
+
+### Prerequisites Verification
+
+Run these commands on **EACH cluster** to verify the environment is ready:
+
+```bash
+# Set namespace
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+# 1. Check Operator Status
+echo "=== Operator CSV Status ==="
+oc get csv -n $SPIRE_NS | grep zero-trust
+# Expected: "Succeeded" in PHASE column
+
+# 2. Check SPIRE Pods
+echo ""
+echo "=== SPIRE Pods ==="
+oc get pods -n $SPIRE_NS
+# Expected: All pods "Running"
+
+# 3. Check SPIRE Server Health
+echo ""
+echo "=== SPIRE Server Health ==="
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server healthcheck
+# Expected: "Server is healthy."
+
+# 4. Get Trust Domain
+echo ""
+echo "=== Trust Domain ==="
+export APP_DOMAIN=$(oc get dns cluster -o jsonpath='{ .spec.baseDomain }')
+export APP_DOMAIN="apps.${APP_DOMAIN}"
+echo "Trust Domain: $APP_DOMAIN"
+```
+
+### Quick Federation Test
+
+```bash
+# Check federation route exists
+oc get route spire-server-federation -n $SPIRE_NS -o wide
+
+# Test federation endpoint
+curl -k -s https://federation.${APP_DOMAIN} | head -c 300
+
+# Check ClusterFederatedTrustDomains
+oc get clusterfederatedtrustdomains -o wide
+
+# List trust bundles
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle list
+```
+
+### Full Retest Reference
+
+For complete retest steps, refer to:
+- **Test Plan:** `Federation-Test-Plan-2Cluster.md` - Contains detailed commands for each test case
+- **Manual Guide:** `Manual-Federation-Testing-Guide.md` - Step-by-step instructions
+
+---
+
 ## Recommendations
 
 1. **Document ACME Requirements:** Clearly document that ACME requires public DNS resolution.

@@ -128,6 +128,7 @@ The testing validates bidirectional federation between two OpenShift clusters us
 1. Use `Federation-Test-Plan-2Cluster.md` to understand test cases
 2. Follow manual test commands in each test section
 3. Update results in your own test report
+4. **All test cases include retest commands** - look for "Retest Commands" sections
 
 ### For Developers
 1. Review negative tests for API validation requirements
@@ -138,6 +139,14 @@ The testing validates bidirectional federation between two OpenShift clusters us
 1. Review `Federation-Test-Report-Dec10-2025-2cluster.md` for GA readiness
 2. Check test statistics and pass rates
 3. Review recommendations section
+
+### ✅ Prerequisites Checklist (Verified Dec 11, 2025)
+
+- [x] Both clusters have Zero Trust Workload Identity Manager operator installed
+- [x] Operator CSV shows "Succeeded" status
+- [x] SPIRE components are running on both clusters
+- [x] Network connectivity between clusters
+- [x] Kubeconfig files available for both clusters
 
 ---
 
