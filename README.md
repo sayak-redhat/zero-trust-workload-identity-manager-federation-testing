@@ -8,14 +8,14 @@ The testing validates bidirectional federation between two OpenShift clusters us
 
 ---
 
-## 📊 Test Results Summary
+## 📊 Test Results Summary (Updated Dec 12, 2025)
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 35 |
-| **Passed** | 33 (94%) |
-| **N/A** | 1 (3%) |
-| **Future** | 1 (3%) |
+| **Total Tests** | 44 |
+| **Passed** | 41 (93%) |
+| **N/A** | 1 (2%) |
+| **Pending** | 2 (5%) |
 | **Failed** | 0 (0%) |
 
 ### ✅ Verdict: **READY FOR GA RELEASE**
@@ -46,24 +46,29 @@ The testing validates bidirectional federation between two OpenShift clusters us
 
 | File | Description |
 |------|-------------|
-| `Federation-Test-Plan-2Cluster.md` | Complete test plan with 35 test cases |
+| `Federation-Test-Plan-2Cluster.md` | Complete test plan with 44 test cases |
 | `Federation-Test-Report-Dec10-2025-2cluster.md` | Test execution report with results |
+| `Federation-Testing-Summary-Dec12-2025.md` | Quick summary for team sharing |
+| `Manual-Federation-Testing-Guide.md` | Step-by-step testing guide |
+| `Federation-Testing-Simple-Guide.md` | Simplified guide for beginners |
+| `Operator-Installation-Guide.md` | Operator installation instructions |
 
 ---
 
 ## 🧪 Test Categories
 
-### Positive Tests (17 Passed)
+### Positive Tests (19/20 Passed ✅)
 
 | ID Range | Category | Status |
 |----------|----------|--------|
-| P1-P8 | Core Federation | ✅ All PASS |
+| P1, P1b | Core Federation (2 methods) | ✅ All PASS |
+| P2-P8 | Route, Bundle, Endpoint | ✅ All PASS |
 | P11-P12 | ACME Integration | ✅ All PASS |
 | P13-P15 | Manual Cert/Route | ✅ All PASS |
-| P16 | Scalability (50 federations) | ✅ PASS |
-| P17-P19 | Configuration | ✅ All PASS |
+| P16-P19 | Scalability & Config | ✅ All PASS |
+| P20 | Cross-Cluster Workload | ✅ PASS |
 
-### Negative Tests (15 Passed)
+### Negative Tests (15/15 Passed ✅)
 
 | ID Range | Category | Status |
 |----------|----------|--------|
@@ -71,35 +76,57 @@ The testing validates bidirectional federation between two OpenShift clusters us
 | N9-N12 | ACME Negative | ✅ All PASS |
 | N13-N15 | Manual Cert Negative | ✅ All PASS |
 
-### Special Cases
+### Customer Scenarios (7/8 Passed ✅)
+
+| ID Range | Category | Status |
+|----------|----------|--------|
+| C1-C4 | Network/Config Issues | ✅ All PASS |
+| C5-C6 | Cert Rotation/Retry | ✅ All PASS |
+| C8 | Pod Restart Recovery | ✅ PASS |
+
+### Pending/Special Cases
 
 | Test | Status | Notes |
 |------|--------|-------|
-| P9 (ACME Auto-Renewal) | 📅 Future | Requires ~30 days to verify |
+| P9 (ACME Auto-Renewal) | ⏳ Pending | Requires ~30 days to verify |
 | P10 (https_web Auto-Fetch) | ⚠️ N/A | Staging ACME certs not publicly trusted |
+| C7 (Operator Upgrade) | ⏳ Pending | Requires actual operator upgrade |
 
 ---
 
 ## 🔑 Key Findings
 
-### 1. Federation Profiles Tested
+### 1. Federation Methods Tested
+
+| Method | Description | Status |
+|--------|-------------|--------|
+| Method 1 | `SpireServer.spec.federation.federatesWith` (inline) | ✅ Working |
+| Method 2 | `ClusterFederatedTrustDomain` CR (separate) | ✅ Working |
+
+### 2. Federation Profiles Tested
 
 | Profile | Description | Status |
 |---------|-------------|--------|
 | `https_spiffe` | SPIRE self-signed certificates | ✅ Working |
 | `https_web` (ACME) | Let's Encrypt certificates | ✅ Working |
+| `https_web` (servingCert) | cert-manager certificates | ✅ Working |
 
-### 2. Important Discoveries
+### 3. Important Discoveries
 
 - **SpireServer is a Singleton**: Must be named `cluster`
+- **Federation Profile is Immutable**: Cannot change once set (security feature)
 - **managedRoute Behavior**: Controls route creation, not deletion
 - **ACME Staging**: Certificates not publicly trusted, require manual `trustDomainBundle`
 - **Bundle Deletion Safety**: SPIRE prevents deletion if workloads reference the trust domain
+- **No Hard Federation Limit**: 55 federations created successfully (no 50 limit!)
 
-### 3. Scalability
+### 4. Scalability & Resilience
 
-- ✅ Successfully tested with **50 federated trust domains**
+- ✅ Successfully tested with **55 federated trust domains** (no hard limit)
 - ✅ SPIRE server remained healthy under load
+- ✅ Pod restart recovery in ~17 seconds
+- ✅ Bundle sync every ~75 seconds
+- ✅ Graceful handling of network failures
 
 ---
 
@@ -107,18 +134,18 @@ The testing validates bidirectional federation between two OpenShift clusters us
 
 | Component | Details |
 |-----------|---------|
-| **Platform** | OpenShift 4.x on GCP |
+| **Platform** | OpenShift 4.x on GCP and AWS |
 | **Operator** | Zero Trust Workload Identity Manager |
 | **SPIRE Version** | Latest (via operator) |
-| **Test Dates** | December 10-11, 2025 |
+| **Test Dates** | December 10-12, 2025 |
 
 ### Clusters Used
 
-| Day | Cluster 1 | Cluster 2 |
-|-----|-----------|-----------|
-| Day 1 | `apps.ci-ln-1pxsfpt-72292.gcp-2.ci.openshift.org` | `apps.ci-ln-gpdipqb-72292.gcp-2.ci.openshift.org` |
-| Day 2 | `apps.ci-ln-lh14qqk-72292.origin-ci-int-gce.dev.rhcloud.com` | `apps.ci-ln-7bgj5qt-72292.origin-ci-int-gce.dev.rhcloud.com` |
-| Day 3 | `apps.ci-ln-jlcigs2-72292.gcp-2.ci.openshift.org` | `apps.ci-ln-ir8ikrb-72292.gcp-2.ci.openshift.org` |
+| Day | Cluster 1 | Cluster 2 | Cloud |
+|-----|-----------|-----------|-------|
+| Day 1-2 | `apps.ci-ln-1pxsfpt-72292.gcp-2.ci.openshift.org` | `apps.ci-ln-gpdipqb-72292.gcp-2.ci.openshift.org` | GCP |
+| Day 3 | `apps.ci-ln-lh14qqk-72292.origin-ci-int-gce.dev.rhcloud.com` | `apps.ci-ln-7bgj5qt-72292.origin-ci-int-gce.dev.rhcloud.com` | GCP |
+| Day 4 | `apps.ci-ln-dspcs42-76ef8.aws-2.ci.openshift.org` | `apps.ci-ln-32vmc0b-72292.origin-ci-int-gce.dev.rhcloud.com` | AWS + GCP |
 
 ---
 
@@ -140,7 +167,11 @@ The testing validates bidirectional federation between two OpenShift clusters us
 2. Check test statistics and pass rates
 3. Review recommendations section
 
-### ✅ Prerequisites Checklist (Verified Dec 11, 2025)
+### For Team Sharing
+1. Use `Federation-Testing-Summary-Dec12-2025.md` for quick overview
+2. Share on Teams/Slack for status updates
+
+### ✅ Prerequisites Checklist
 
 - [x] Both clusters have Zero Trust Workload Identity Manager operator installed
 - [x] Operator CSV shows "Succeeded" status
@@ -164,7 +195,20 @@ curl -k -s https://federation.<APP_DOMAIN> | head -c 200
 
 # Check SPIRE server health
 oc exec -n zero-trust-workload-identity-manager spire-server-0 -c spire-server -- /spire-server healthcheck
+
+# Check SPIRE entries with federation
+oc exec -n zero-trust-workload-identity-manager spire-server-0 -c spire-server -- /spire-server entry show
 ```
+
+---
+
+## 📈 Test Progress Timeline
+
+| Date | Tests Executed | Cumulative Pass Rate |
+|------|----------------|---------------------|
+| Dec 10 | P1-P8, N1-N8 (Core Federation) | 16/16 (100%) |
+| Dec 11 | P8-P12, P16-P19, N9-N12 (ACME & Config) | 29/30 (97%) |
+| Dec 12 | P1b, P13-P15, P20, N13-N15, C1-C8 | 41/44 (93%) |
 
 ---
 
@@ -173,7 +217,7 @@ oc exec -n zero-trust-workload-identity-manager spire-server-0 -c spire-server -
 | Role | Name |
 |------|------|
 | **QE Engineer** | Sayak Das |
-| **Test Date** | December 10-11, 2025 |
+| **Test Dates** | December 10-12, 2025 |
 
 ---
 
@@ -183,5 +227,4 @@ Internal Red Hat Testing Documentation
 
 ---
 
-*Last Updated: December 11, 2025*
-
+*Last Updated: December 12, 2025*
