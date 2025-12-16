@@ -26,7 +26,8 @@
 8. [Negative Test Scenarios](#negative-test-scenarios)
 9. [Test Execution Summary Template](#test-execution-summary-template)
 10. [Appendix](#appendix)
-11. [Future: Three-Cluster Federation](#future-three-cluster-federation)
+11. [Azure ↔ GCP Cross-Cloud Federation](#azure--gcp-cross-cloud-federation)
+12. [Future: Three-Cluster Federation](#future-three-cluster-federation)
 
 ---
 
@@ -4850,6 +4851,1175 @@ The developer gist provides automated setup scripts:
 - [ ] DNS publicly accessible for Let's Encrypt validation
 - [ ] cert-manager operator installed (for serving_cert option)
 - [ ] Port 80 accessible for HTTP-01 challenge (ACME)
+
+---
+
+## Azure ↔ GCP Cross-Cloud Federation
+
+> **Status:** ✅ **COMPLETED**  
+> **Purpose:** Verify SPIRE Federation works across Azure and GCP infrastructure  
+> **Added:** December 16, 2025  
+> **Executed:** December 16, 2025
+
+### Test Environment (Actual)
+
+| Cluster | Cloud | Trust Domain | Profile |
+|---------|-------|--------------|---------|
+| **Cluster 1** | **Azure** | `apps.ci-ln-rss07bt-1d09d.ci2.azure.devcluster.openshift.com` | https_spiffe |
+| **Cluster 2** | **GCP** | `apps.ci-ln-gmy2nx2-72292.gcp-2.ci.openshift.org` | https_spiffe |
+
+### Test Environment Setup (Reference)
+
+### Environment Variables Setup
+
+```bash
+# === Azure Cluster Variables ===
+export AZURE_KUBECONFIG="/path/to/azure/kubeconfig"
+export AZURE_DOMAIN="apps.<aro-cluster>.eastus.aroapp.io"  # Replace with actual
+
+# === GCP Cluster Variables ===
+export GCP_KUBECONFIG="/path/to/gcp/kubeconfig"
+export GCP_DOMAIN="apps.<gcp-cluster>.gcp.ci.openshift.org"  # Replace with actual
+
+# === Common Variables ===
+export SPIRE_NS="zero-trust-workload-identity-manager"
+```
+
+---
+
+### P21: Basic Azure ↔ GCP Federation
+
+| Test ID | P21 |
+|---------|-----|
+| **Title** | Bidirectional Federation Between Azure and GCP Clusters |
+| **Priority** | High |
+| **Type** | Cross-Cloud Integration |
+| **Status** | ✅ **PASSED** |
+| **Test Date** | December 16, 2025 |
+| **Prerequisite** | Operator installed on both Azure and GCP clusters |
+
+#### Description
+
+Verify that SPIRE Federation can be established between an Azure OpenShift cluster and a GCP OpenShift cluster using the `https_spiffe` profile.
+
+#### Test Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Verify operator on Azure cluster | CSV shows "Succeeded" |
+| 2 | Verify operator on GCP cluster | CSV shows "Succeeded" |
+| 3 | Enable federation endpoint on Azure | Route created |
+| 4 | Enable federation endpoint on GCP | Route created |
+| 5 | Get bundle from Azure cluster | JWKS JSON returned |
+| 6 | Get bundle from GCP cluster | JWKS JSON returned |
+| 7 | Create ClusterFederatedTrustDomain on Azure pointing to GCP | CR created |
+| 8 | Create ClusterFederatedTrustDomain on GCP pointing to Azure | CR created |
+| 9 | Verify bundle list on Azure | Shows GCP trust domain |
+| 10 | Verify bundle list on GCP | Shows Azure trust domain |
+
+#### Manual Test Commands
+
+**Step 1-2: Verify Operator on Both Clusters**
+```bash
+# === On Azure Cluster ===
+KUBECONFIG=$AZURE_KUBECONFIG oc get csv -n $SPIRE_NS | grep zero-trust
+# Expected: Succeeded
+
+# === On GCP Cluster ===
+KUBECONFIG=$GCP_KUBECONFIG oc get csv -n $SPIRE_NS | grep zero-trust
+# Expected: Succeeded
+```
+
+**Step 3-4: Enable Federation Endpoint (if not already enabled)**
+```bash
+# === On Azure Cluster ===
+KUBECONFIG=$AZURE_KUBECONFIG oc apply -f - <<EOF
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireServer
+metadata:
+  name: cluster
+spec:
+  federation:
+    bundleEndpoint:
+      profile: https_spiffe
+      refreshHint: 300
+    managedRoute: "true"
+EOF
+
+# === On GCP Cluster ===
+KUBECONFIG=$GCP_KUBECONFIG oc apply -f - <<EOF
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireServer
+metadata:
+  name: cluster
+spec:
+  federation:
+    bundleEndpoint:
+      profile: https_spiffe
+      refreshHint: 300
+    managedRoute: "true"
+EOF
+```
+
+**Step 5-6: Get Trust Bundles**
+```bash
+# === Get Azure Bundle ===
+curl -k -s https://federation.${AZURE_DOMAIN} > /tmp/azure-bundle.json
+cat /tmp/azure-bundle.json | jq '.keys[0].kty'
+# Expected: "RSA"
+
+# === Get GCP Bundle ===
+curl -k -s https://federation.${GCP_DOMAIN} > /tmp/gcp-bundle.json
+cat /tmp/gcp-bundle.json | jq '.keys[0].kty'
+# Expected: "RSA"
+```
+
+**Step 7-8: Create ClusterFederatedTrustDomain**
+```bash
+# === On Azure - Federate with GCP ===
+KUBECONFIG=$AZURE_KUBECONFIG oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterFederatedTrustDomain
+metadata:
+  name: federate-with-gcp
+spec:
+  trustDomain: ${GCP_DOMAIN}
+  bundleEndpointURL: https://federation.${GCP_DOMAIN}
+  bundleEndpointProfile:
+    type: https_spiffe
+    endpointSPIFFEID: spiffe://${GCP_DOMAIN}/spire/server
+  className: zero-trust-workload-identity-manager-spire
+  trustDomainBundle: |
+$(cat /tmp/gcp-bundle.json | sed 's/^/    /')
+EOF
+
+# === On GCP - Federate with Azure ===
+KUBECONFIG=$GCP_KUBECONFIG oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterFederatedTrustDomain
+metadata:
+  name: federate-with-azure
+spec:
+  trustDomain: ${AZURE_DOMAIN}
+  bundleEndpointURL: https://federation.${AZURE_DOMAIN}
+  bundleEndpointProfile:
+    type: https_spiffe
+    endpointSPIFFEID: spiffe://${AZURE_DOMAIN}/spire/server
+  className: zero-trust-workload-identity-manager-spire
+  trustDomainBundle: |
+$(cat /tmp/azure-bundle.json | sed 's/^/    /')
+EOF
+```
+
+**Step 9-10: Verify Bundle Lists**
+```bash
+# === On Azure Cluster ===
+echo "=== Azure Bundle List (should show GCP domain) ==="
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server bundle list | grep -A 2 "$GCP_DOMAIN"
+
+# === On GCP Cluster ===
+echo "=== GCP Bundle List (should show Azure domain) ==="
+KUBECONFIG=$GCP_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server bundle list | grep -A 2 "$AZURE_DOMAIN"
+```
+
+#### Pass Criteria
+- [ ] Operator running on both Azure and GCP clusters
+- [ ] Federation routes created on both clusters
+- [ ] Bundle endpoints accessible from both directions
+- [ ] Azure bundle list shows GCP trust domain
+- [ ] GCP bundle list shows Azure trust domain
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### P22: Azure ↔ GCP Workload Federation
+
+| Test ID | P22 |
+|---------|-----|
+| **Title** | Cross-Cloud Workload Communication (Azure ↔ GCP) |
+| **Priority** | High |
+| **Type** | E2E Cross-Cloud |
+| **Status** | ✅ **PASSED** |
+| **Test Date** | December 16, 2025 |
+| **Prerequisite** | P21 completed (federation established) |
+
+#### Description
+
+Verify that workloads deployed on Azure and GCP clusters can be configured with `federatesWith` and receive SPIRE entries that trust the remote cluster.
+
+#### Test Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Create `federation-test` namespace on Azure | Namespace created |
+| 2 | Create `federation-test` namespace on GCP | Namespace created |
+| 3 | Create ClusterSPIFFEID on Azure with `federatesWith: GCP` | ClusterSPIFFEID created |
+| 4 | Create ClusterSPIFFEID on GCP with `federatesWith: Azure` | ClusterSPIFFEID created |
+| 5 | Deploy test workload on Azure | Pod running |
+| 6 | Deploy test workload on GCP | Pod running |
+| 7 | Verify SPIRE entry on Azure shows FederatesWith | GCP domain present |
+| 8 | Verify SPIRE entry on GCP shows FederatesWith | Azure domain present |
+
+#### Manual Test Commands
+
+**Step 1-2: Create Namespaces**
+```bash
+# === On Azure ===
+KUBECONFIG=$AZURE_KUBECONFIG oc create namespace federation-test
+
+# === On GCP ===
+KUBECONFIG=$GCP_KUBECONFIG oc create namespace federation-test
+```
+
+**Step 3: Create ClusterSPIFFEID on Azure**
+```bash
+KUBECONFIG=$AZURE_KUBECONFIG oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: federation-test-workload
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: federation-test
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: federation-test
+  federatesWith:
+    - "${GCP_DOMAIN}"
+EOF
+```
+
+**Step 4: Create ClusterSPIFFEID on GCP**
+```bash
+KUBECONFIG=$GCP_KUBECONFIG oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: federation-test-workload
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: federation-test
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: federation-test
+  federatesWith:
+    - "${AZURE_DOMAIN}"
+EOF
+```
+
+**Step 5-6: Deploy Test Workloads**
+```bash
+# === Workload YAML (apply on BOTH clusters) ===
+cat <<EOF > /tmp/federation-test-workload.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: federation-test-sa
+  namespace: federation-test
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: federation-test-workload
+  namespace: federation-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: federation-test
+  template:
+    metadata:
+      labels:
+        app: federation-test
+    spec:
+      serviceAccountName: federation-test-sa
+      containers:
+      - name: spiffe-helper
+        image: registry.redhat.io/openshift4/ose-cli:latest
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+      volumes:
+      - name: spiffe-workload-api
+        csi:
+          driver: csi.spiffe.io
+          readOnly: true
+EOF
+
+# === Apply on Azure ===
+KUBECONFIG=$AZURE_KUBECONFIG oc apply -f /tmp/federation-test-workload.yaml
+
+# === Apply on GCP ===
+KUBECONFIG=$GCP_KUBECONFIG oc apply -f /tmp/federation-test-workload.yaml
+
+# === Wait for pods ===
+KUBECONFIG=$AZURE_KUBECONFIG oc wait -n federation-test --for=condition=Ready pod -l app=federation-test --timeout=120s
+KUBECONFIG=$GCP_KUBECONFIG oc wait -n federation-test --for=condition=Ready pod -l app=federation-test --timeout=120s
+```
+
+**Step 7-8: Verify SPIRE Entries**
+```bash
+# === On Azure - Check for FederatesWith GCP ===
+echo "=== Azure SPIRE Entry (should show FederatesWith: ${GCP_DOMAIN}) ==="
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server entry show -selector k8s:pod-label:app:federation-test
+
+# === On GCP - Check for FederatesWith Azure ===
+echo "=== GCP SPIRE Entry (should show FederatesWith: ${AZURE_DOMAIN}) ==="
+KUBECONFIG=$GCP_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server entry show -selector k8s:pod-label:app:federation-test
+```
+
+#### Pass Criteria
+- [ ] Workload pods running on both Azure and GCP
+- [ ] Azure SPIRE entry shows `FederatesWith: <GCP_DOMAIN>`
+- [ ] GCP SPIRE entry shows `FederatesWith: <AZURE_DOMAIN>`
+- [ ] Workload API socket available in both pods
+
+#### Test Result: ⬜ PENDING
+
+---
+
+---
+
+## 13. STS (Short-Lived Token Service) Cluster Testing
+
+This section covers testing SPIRE Federation on clusters configured with **STS mode** (short-lived credentials). STS is a critical enterprise requirement for security compliance.
+
+### What is STS Mode?
+
+| Cloud | STS Feature | CCO Mode | Description |
+|-------|-------------|----------|-------------|
+| **AWS** | IRSA (IAM Roles for Service Accounts) | Manual/STS | Pods assume IAM roles via OIDC tokens |
+| **Azure** | Azure AD Workload Identity | Manual | Pods get Azure AD tokens via federated credentials |
+| **GCP** | GCP Workload Identity | Manual | Pods get GCP SA tokens via Workload Identity |
+
+### Why Test on STS Clusters?
+
+1. **Enterprise Requirement:** Most production clusters use STS for security
+2. **Token Lifetime:** STS tokens expire (typically 1-12 hours)
+3. **Credential Rotation:** No static IAM keys to manage
+4. **Compliance:** Required for PCI-DSS, SOC2, FedRAMP
+
+### How to Identify STS Cluster
+
+```bash
+# === Method 1: Check CCO (Cloud Credential Operator) Mode ===
+oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+# STS/Workload Identity Output: "Manual" or ""
+# Long-lived credentials Output: "Mint" or "Passthrough"
+
+# === Method 2: Check CCO Operator Status ===
+oc get co cloud-credential -o yaml | grep -A5 "status:"
+
+# === Method 3: Check Authentication Configuration ===
+oc get authentication cluster -o jsonpath='{.spec.serviceAccountIssuer}'
+# STS clusters have external issuer URL (not internal kubernetes issuer)
+
+# === Method 4: Check for ccoctl-generated credentials ===
+oc get secret -n openshift-cloud-credential-operator | grep -i credentials
+# STS mode typically shows fewer secrets (no master credentials)
+
+# === Method 5 (AWS): Check for IAM Role annotations ===
+oc get serviceaccount -A -o yaml | grep -i "eks.amazonaws.com/role-arn\|openshift.io/aws-role-arn"
+
+# === Method 6 (Azure): Check for Workload Identity ===
+oc get infrastructure cluster -o jsonpath='{.status.platformStatus.azure}'
+# Look for cloudName and resourceTags
+
+# === Method 7 (GCP): Check for Workload Identity Pool ===
+oc get authentication cluster -o yaml | grep -i "iam.googleapis.com"
+```
+
+---
+
+### STS-1: Verify Cluster STS Mode
+
+| Test ID | STS-1 |
+|---------|-------|
+| **Title** | Identify and Document STS Configuration |
+| **Priority** | High |
+| **Type** | Pre-requisite |
+| **Status** | ⬜ PENDING |
+
+#### Test Commands
+
+```bash
+export SPIRE_NS="zero-trust-workload-identity-manager"
+
+echo "=== Cluster Platform Info ==="
+oc get infrastructure cluster -o jsonpath='{.status.platformStatus.type}'
+echo ""
+
+echo "=== CCO Mode ==="
+oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+echo ""
+
+echo "=== Service Account Issuer ==="
+oc get authentication cluster -o jsonpath='{.spec.serviceAccountIssuer}'
+echo ""
+
+echo "=== CCO Operator Status ==="
+oc get co cloud-credential -o jsonpath='{.status.conditions[?(@.type=="Available")].status}'
+echo ""
+
+echo "=== Cloud Credential Secrets Count ==="
+oc get secret -n openshift-cloud-credential-operator --no-headers | wc -l
+```
+
+#### Expected Results for STS Cluster
+
+| Check | Non-STS Value | STS Value |
+|-------|---------------|-----------|
+| CCO Mode | `Mint` or `Passthrough` | `Manual` or empty |
+| SA Issuer | Internal Kubernetes | External URL (cloud provider) |
+| CCO Available | `True` | `True` |
+
+#### Document Results
+
+```
+Cluster 1 (___):
+  Platform: ___________
+  CCO Mode: ___________
+  SA Issuer: ___________
+  Is STS: [ ] Yes / [ ] No
+
+Cluster 2 (___):
+  Platform: ___________
+  CCO Mode: ___________
+  SA Issuer: ___________
+  Is STS: [ ] Yes / [ ] No
+```
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### STS-2: Operator Installation on STS Cluster
+
+| Test ID | STS-2 |
+|---------|-------|
+| **Title** | Zero Trust Workload Identity Manager Installation on STS |
+| **Priority** | Critical |
+| **Type** | Installation |
+| **Status** | ⬜ PENDING |
+
+#### Description
+
+Verify the operator can be installed and operates correctly on STS clusters where the operator itself may need cloud credentials.
+
+#### Test Commands
+
+```bash
+# === Step 1: Install operator (via OperatorHub or catalog source) ===
+# Follow standard installation procedure
+
+# === Step 2: Verify operator pods are running ===
+oc get pods -n $SPIRE_NS
+# Expected: controller-manager, spire-server, spire-agents all Running
+
+# === Step 3: Check operator logs for credential errors ===
+oc logs -n $SPIRE_NS deployment/zero-trust-workload-identity-manager-controller-manager --tail=50 | grep -i "error\|credential\|auth"
+# Expected: No credential-related errors
+
+# === Step 4: Check SPIRE server logs ===
+oc logs -n $SPIRE_NS spire-server-0 -c spire-server --tail=50 | grep -i "error\|credential"
+# Expected: No credential-related errors
+
+# === Step 5: Verify SPIRE health ===
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server healthcheck
+# Expected: "Server is healthy"
+```
+
+#### Pass Criteria
+- [ ] Operator pods running without CrashLoopBackOff
+- [ ] No credential-related errors in logs
+- [ ] SPIRE server healthy
+- [ ] SPIRE agents registered with server
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### STS-3: Federation on STS Clusters (SPIRE Independence)
+
+| Test ID | STS-3 |
+|---------|-------|
+| **Title** | SPIRE Federation Works Independent of Cloud IAM |
+| **Priority** | Critical |
+| **Type** | Core Functionality |
+| **Status** | ⬜ PENDING |
+
+#### Description
+
+This test verifies that SPIRE Federation operates independently of the cloud provider's STS/Workload Identity system. SPIRE has its own identity system (SPIFFE IDs) that should work regardless of cloud IAM configuration.
+
+#### Test Commands
+
+```bash
+# === Step 1: Enable federation on STS Cluster ===
+export APP_DOMAIN=$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')
+export APP_DOMAIN="apps.${APP_DOMAIN}"
+export JWT_ISSUER="oidc-discovery.${APP_DOMAIN}"
+
+oc apply -f - <<EOF
+apiVersion: operator.openshift.io/v1alpha1
+kind: SpireServer
+metadata:
+  name: cluster
+spec:
+  caSubject:
+    commonName: "SPIRE Server CA"
+    country: "US"
+    organization: "RH"
+  jwtIssuer: https://${JWT_ISSUER}
+  persistence:
+    type: pvc
+    size: "2Gi"
+    accessMode: ReadWriteOncePod
+  datastore:
+    databaseType: sqlite3
+    connectionString: "/run/spire/data/datastore.sqlite3"
+    maxOpenConns: 100
+    maxIdleConns: 2
+    connMaxLifetime: 3600
+  federation:
+    bundleEndpoint:
+      profile: https_spiffe
+      refreshHint: 300
+    managedRoute: "true"
+EOF
+
+# === Step 2: Verify federation route created ===
+oc get route spire-server-federation -n $SPIRE_NS -o wide
+# Expected: Route exists
+
+# === Step 3: Test bundle endpoint ===
+FEDERATION_URL=$(oc get route spire-server-federation -n $SPIRE_NS -o jsonpath='{.spec.host}')
+curl -k -s https://${FEDERATION_URL} | head -c 200
+# Expected: Valid JWKS JSON
+
+# === Step 4: Check SPIRE is issuing its OWN certificates (not cloud IAM) ===
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle show -format spiffe | head -20
+# Expected: SPIRE-issued certificates (not cloud CA)
+```
+
+#### Key Verification
+
+```bash
+# === Verify SPIRE issues its own SVIDs (independent of cloud) ===
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show
+
+# Look for:
+# - SPIFFE ID format: spiffe://<trust-domain>/...
+# - NOT cloud IAM ARN or Azure AD identities
+```
+
+#### Pass Criteria
+- [ ] Federation endpoint accessible on STS cluster
+- [ ] SPIRE issues its own X.509 SVIDs
+- [ ] No dependency on cloud IAM credentials for SVID issuance
+- [ ] Federation bundle contains SPIRE CA (not cloud CA)
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### STS-4: Cross-Cloud STS Federation
+
+| Test ID | STS-4 |
+|---------|-------|
+| **Title** | Federation Between Two STS Clusters |
+| **Priority** | Critical |
+| **Type** | Cross-Cloud |
+| **Status** | ⬜ PENDING |
+
+#### Test Scenarios
+
+| Scenario | Cluster 1 | Cluster 2 |
+|----------|-----------|-----------|
+| A | AWS STS (IRSA) | GCP WI |
+| B | Azure WI | GCP WI |
+| C | Azure WI | AWS STS |
+
+#### Test Commands (Scenario B: Azure STS ↔ GCP STS)
+
+```bash
+# === On Azure STS Cluster ===
+export AZURE_DOMAIN="apps.<your-azure-domain>"
+export GCP_DOMAIN="apps.<your-gcp-domain>"
+
+# Verify Azure is in STS mode
+oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+# Expected: "Manual"
+
+# Get Azure bundle
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle show -format spiffe > /tmp/azure-sts-bundle.json
+
+# === On GCP STS Cluster ===
+# Verify GCP is in STS mode
+oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+# Expected: "Manual"
+
+# Get GCP bundle
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle show -format spiffe > /tmp/gcp-sts-bundle.json
+
+# === Establish federation (same as P21) ===
+# Create ClusterFederatedTrustDomain on each cluster pointing to the other
+```
+
+#### Pass Criteria
+- [ ] Both clusters confirmed in STS mode
+- [ ] Federation established between STS clusters
+- [ ] Bundle exchange successful
+- [ ] Workloads can get federated SVIDs
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### STS-5: Workload Federation on STS Cluster
+
+| Test ID | STS-5 |
+|---------|-------|
+| **Title** | Workload Gets Federated SVID on STS Cluster |
+| **Priority** | Critical |
+| **Type** | Workload |
+| **Status** | ⬜ PENDING |
+
+#### Test Commands
+
+```bash
+# === Deploy test workload with federation ===
+export REMOTE_DOMAIN="apps.<remote-cluster-domain>"
+
+# Create namespace
+oc create namespace federation-test-sts
+
+# Create ClusterSPIFFEID with federatesWith
+oc apply -f - <<EOF
+apiVersion: spire.spiffe.io/v1alpha1
+kind: ClusterSPIFFEID
+metadata:
+  name: federation-test-sts-workload
+spec:
+  className: zero-trust-workload-identity-manager-spire
+  spiffeIDTemplate: "spiffe://{{ .TrustDomain }}/ns/{{ .PodMeta.Namespace }}/sa/{{ .PodSpec.ServiceAccountName }}"
+  podSelector:
+    matchLabels:
+      app: federation-test-sts
+  namespaceSelector:
+    matchLabels:
+      kubernetes.io/metadata.name: federation-test-sts
+  federatesWith:
+    - "${REMOTE_DOMAIN}"
+EOF
+
+# Deploy workload
+oc apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: federation-test-sts-sa
+  namespace: federation-test-sts
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: federation-test-sts-workload
+  namespace: federation-test-sts
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: federation-test-sts
+  template:
+    metadata:
+      labels:
+        app: federation-test-sts
+    spec:
+      serviceAccountName: federation-test-sts-sa
+      containers:
+      - name: test
+        image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+        command: ["sleep", "infinity"]
+        volumeMounts:
+        - name: spiffe-workload-api
+          mountPath: /spiffe-workload-api
+          readOnly: true
+      volumes:
+      - name: spiffe-workload-api
+        csi:
+          driver: csi.spiffe.io
+          readOnly: true
+EOF
+
+# Wait for pod
+oc wait -n federation-test-sts --for=condition=Ready pod -l app=federation-test-sts --timeout=120s
+
+# === Verify SPIRE entry has FederatesWith ===
+POD_UID=$(oc get pod -n federation-test-sts -l app=federation-test-sts -o jsonpath='{.items[0].metadata.uid}')
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show -selector k8s:pod-uid:${POD_UID}
+# Expected: FederatesWith: <remote-domain>
+```
+
+#### Pass Criteria
+- [ ] Workload pod running on STS cluster
+- [ ] SPIRE entry created with correct SPIFFE ID
+- [ ] FederatesWith field present (pointing to remote cluster)
+- [ ] SVID issued to workload (check /spiffe-workload-api in pod)
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### STS-6: Token Rotation Impact (Long-Running Test)
+
+| Test ID | STS-6 |
+|---------|-------|
+| **Title** | Federation Survives Cloud Token Rotation |
+| **Priority** | High |
+| **Type** | Resilience |
+| **Status** | ⬜ PLANNED |
+
+#### Description
+
+Verify that SPIRE Federation continues working when underlying cloud STS tokens rotate (typically every 1-12 hours).
+
+#### Test Commands
+
+```bash
+# === Step 1: Note current time and federation status ===
+echo "Start time: $(date)"
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle list | head -5
+
+# === Step 2: Wait for token rotation (or simulate) ===
+# AWS: IRSA tokens rotate every 12 hours by default
+# Azure: Workload Identity tokens rotate every 1 hour
+# GCP: Workload Identity tokens rotate every 1 hour
+
+# === Step 3: After token rotation, verify federation ===
+echo "Check time: $(date)"
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server bundle list | head -5
+# Expected: Remote bundle still present
+
+# === Step 4: Verify new workload can still get federated SVID ===
+oc delete pod -n federation-test-sts -l app=federation-test-sts
+oc wait -n federation-test-sts --for=condition=Ready pod -l app=federation-test-sts --timeout=120s
+POD_UID=$(oc get pod -n federation-test-sts -l app=federation-test-sts -o jsonpath='{.items[0].metadata.uid}')
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show -selector k8s:pod-uid:${POD_UID}
+# Expected: FederatesWith still present
+```
+
+#### Pass Criteria
+- [ ] Federation works after cloud token rotation
+- [ ] No errors related to cloud credentials
+- [ ] New workloads get federated SVIDs after rotation
+- [ ] Bundle refresh continues normally
+
+#### Test Result: ⬜ PLANNED (requires long-running cluster)
+
+---
+
+### P23: Azure ↔ GCP with Cloud Workload Identity Enabled
+
+| Test ID | P23 |
+|---------|-----|
+| **Title** | Federation Compatibility with Cloud Workload Identity |
+| **Priority** | Medium |
+| **Type** | Compatibility |
+| **Status** | ⬜ PENDING |
+| **Prerequisite** | Clusters with Workload Identity/STS enabled |
+
+#### Description
+
+Verify SPIRE Federation works when cloud-native Workload Identity is enabled:
+- **Azure:** Azure AD Workload Identity / Managed Identity (CCO mode: Manual)
+- **GCP:** GCP Workload Identity Federation (CCO mode: Manual)
+
+#### Pre-check Commands
+
+```bash
+# === Check CCO Mode on Azure Cluster ===
+KUBECONFIG=$AZURE_KUBECONFIG oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+# Expected for Workload Identity: "Manual"
+
+# === Check CCO Mode on GCP Cluster ===
+KUBECONFIG=$GCP_KUBECONFIG oc get cloudcredential cluster -o jsonpath='{.spec.credentialsMode}'
+# Expected for Workload Identity: "Manual"
+
+# === Verify Azure AD Workload Identity (if applicable) ===
+KUBECONFIG=$AZURE_KUBECONFIG oc get authentication cluster -o jsonpath='{.spec.serviceAccountIssuer}'
+# Should show Azure AD issuer URL
+
+# === Verify GCP Workload Identity (if applicable) ===
+KUBECONFIG=$GCP_KUBECONFIG oc get authentication cluster -o jsonpath='{.spec.serviceAccountIssuer}'
+# Should show GCP issuer URL
+```
+
+#### Test Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Verify CCO mode on Azure cluster | Shows credential mode |
+| 2 | Verify CCO mode on GCP cluster | Shows credential mode |
+| 3 | Deploy operator on Azure (WI enabled) | Operator running |
+| 4 | Deploy operator on GCP (WI enabled) | Operator running |
+| 5 | Establish federation (P21 steps) | Federation works |
+| 6 | Verify workload federation (P22 steps) | Workloads federated |
+
+#### Pass Criteria
+- [ ] CCO mode documented for both clusters
+- [ ] SPIRE Federation works regardless of CCO mode
+- [ ] SPIRE SVIDs issued independent of cloud IAM
+- [ ] No conflict between SPIRE identity and cloud Workload Identity
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### P24: Network Connectivity Verification (Azure ↔ GCP)
+
+| Test ID | P24 |
+|---------|-----|
+| **Title** | Cross-Cloud Network Connectivity for Federation |
+| **Priority** | High |
+| **Type** | Infrastructure |
+| **Status** | 📋 PLANNED |
+
+#### Description
+
+Verify network connectivity between Azure and GCP clusters allows federation endpoints to communicate.
+
+#### Manual Test Commands
+
+```bash
+# === From Azure Cluster - Test connectivity to GCP ===
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  curl -k -s -o /dev/null -w "%{http_code}" https://federation.${GCP_DOMAIN}
+# Expected: 200
+
+# === From GCP Cluster - Test connectivity to Azure ===
+KUBECONFIG=$GCP_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  curl -k -s -o /dev/null -w "%{http_code}" https://federation.${AZURE_DOMAIN}
+# Expected: 200
+
+# === Verify JWKS response from GCP ===
+curl -k -s https://federation.${GCP_DOMAIN} | jq '.keys | length'
+# Expected: 1 or more
+
+# === Verify JWKS response from Azure ===
+curl -k -s https://federation.${AZURE_DOMAIN} | jq '.keys | length'
+# Expected: 1 or more
+
+# === Check DNS resolution from Azure pod ===
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  nslookup federation.${GCP_DOMAIN}
+# Expected: Returns IP address
+
+# === Check DNS resolution from GCP pod ===
+KUBECONFIG=$GCP_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  nslookup federation.${AZURE_DOMAIN}
+# Expected: Returns IP address
+```
+
+#### Pass Criteria
+- [ ] Azure cluster can reach GCP federation endpoint (HTTP 200)
+- [ ] GCP cluster can reach Azure federation endpoint (HTTP 200)
+- [ ] DNS resolution works from both directions
+- [ ] No firewall blocking HTTPS traffic
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### P25: Azure ↔ GCP Federation Resilience
+
+| Test ID | P25 |
+|---------|-----|
+| **Title** | Cross-Cloud Federation Resilience Testing |
+| **Priority** | Medium |
+| **Type** | Resilience |
+| **Status** | 📋 PLANNED |
+
+#### Description
+
+Test federation resilience when one cloud's cluster becomes temporarily unavailable.
+
+#### Test Steps
+
+| Step | Action | Expected Result |
+|------|--------|-----------------|
+| 1 | Establish Azure ↔ GCP federation | Federation working |
+| 2 | Verify bundle cached on both clusters | Bundles present |
+| 3 | Simulate GCP cluster unavailable | Azure logs timeout errors |
+| 4 | Verify Azure still has cached GCP bundle | Bundle persists |
+| 5 | Restore GCP cluster | Bundle refresh resumes |
+| 6 | Verify automatic recovery | Both clusters synced |
+
+#### Manual Test Commands
+
+```bash
+# === Step 1-2: Verify working federation ===
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server bundle list | grep "$GCP_DOMAIN"
+# Expected: Shows GCP bundle
+
+# === Step 3: Simulate GCP unavailable (point to dead endpoint) ===
+KUBECONFIG=$AZURE_KUBECONFIG oc patch clusterfederatedtrustdomain federate-with-gcp --type='json' \
+  -p='[{"op": "replace", "path": "/spec/bundleEndpointURL", "value": "https://10.255.255.1:8443"}]'
+
+# === Step 4: Wait and check logs ===
+sleep 90
+KUBECONFIG=$AZURE_KUBECONFIG oc logs -n $SPIRE_NS spire-server-0 -c spire-server --tail=20 | grep -i "error\|timeout"
+# Expected: Timeout errors logged
+
+# === Verify cached bundle still exists ===
+KUBECONFIG=$AZURE_KUBECONFIG oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- \
+  /spire-server bundle list | grep "$GCP_DOMAIN"
+# Expected: Bundle STILL present (cached)
+
+# === Step 5: Restore original endpoint ===
+KUBECONFIG=$AZURE_KUBECONFIG oc patch clusterfederatedtrustdomain federate-with-gcp --type='json' \
+  -p="[{\"op\": \"replace\", \"path\": \"/spec/bundleEndpointURL\", \"value\": \"https://federation.${GCP_DOMAIN}\"}]"
+
+# === Step 6: Verify recovery ===
+sleep 90
+KUBECONFIG=$AZURE_KUBECONFIG oc logs -n $SPIRE_NS spire-server-0 -c spire-server --tail=10 | grep "Bundle refreshed"
+# Expected: "Bundle refreshed" log entry
+```
+
+#### Pass Criteria
+- [ ] Cached bundle persists during remote cluster outage
+- [ ] Error logged but no crash
+- [ ] Automatic recovery when remote cluster returns
+- [ ] Bundle refresh resumes normally
+
+#### Test Result: ⬜ PENDING
+
+---
+
+### Quick Checklist: Azure ↔ GCP Federation
+
+Use this checklist when starting Azure ↔ GCP federation testing:
+
+| # | Check | Azure Command | GCP Command | Expected |
+|---|-------|---------------|-------------|----------|
+| 1 | Operator installed | `oc get csv -n $SPIRE_NS` | `oc get csv -n $SPIRE_NS` | Succeeded |
+| 2 | SPIRE Server healthy | `oc exec ... healthcheck` | `oc exec ... healthcheck` | Server is healthy |
+| 3 | Federation route exists | `oc get route spire-server-federation` | `oc get route spire-server-federation` | Route exists |
+| 4 | Bundle endpoint accessible | `curl -k https://federation.<azure>` | `curl -k https://federation.<gcp>` | JWKS JSON |
+| 5 | Cross-cloud connectivity | From Azure: `curl GCP endpoint` | From GCP: `curl Azure endpoint` | HTTP 200 |
+| 6 | Remote bundle fetched | `bundle list \| grep GCP` | `bundle list \| grep Azure` | Remote domain shown |
+| 7 | Workload has FederatesWith | `entry show \| grep FederatesWith` | `entry show \| grep FederatesWith` | Remote domain |
+
+---
+
+### Cleanup Commands (Azure ↔ GCP)
+
+```bash
+# === Cleanup on Azure ===
+KUBECONFIG=$AZURE_KUBECONFIG oc delete namespace federation-test --ignore-not-found
+KUBECONFIG=$AZURE_KUBECONFIG oc delete clusterspiffeid federation-test-workload --ignore-not-found
+KUBECONFIG=$AZURE_KUBECONFIG oc delete clusterfederatedtrustdomain federate-with-gcp --ignore-not-found
+
+# === Cleanup on GCP ===
+KUBECONFIG=$GCP_KUBECONFIG oc delete namespace federation-test --ignore-not-found
+KUBECONFIG=$GCP_KUBECONFIG oc delete clusterspiffeid federation-test-workload --ignore-not-found
+KUBECONFIG=$GCP_KUBECONFIG oc delete clusterfederatedtrustdomain federate-with-azure --ignore-not-found
+```
+
+---
+
+### Notes for Azure Infrastructure
+
+| Item | Consideration |
+|------|---------------|
+| **ARO (Azure Red Hat OpenShift)** | Federation should work the same as standard OCP |
+| **Azure Firewall/NSG** | Ensure outbound HTTPS (443) allowed to GCP |
+| **Private Link** | If using private endpoints, ensure cross-cloud VPN/interconnect |
+| **DNS** | Verify Azure cluster can resolve GCP public DNS names |
+| **Managed Identity** | SPIRE works independently of Azure Managed Identity |
+
+---
+
+*Azure ↔ GCP Federation Test Scenarios added: December 16, 2025*
+
+---
+
+## 12. Workload Lifecycle Tests
+
+These tests verify that federation configuration (`FederatesWith`) persists correctly through workload lifecycle events. Critical for customer scenarios involving HPA, rolling updates, and infrastructure maintenance.
+
+---
+
+### W1: Workload Pod Restart
+
+| Test ID | W1 |
+|---------|-----|
+| **Title** | Federation Persists After Workload Pod Restart |
+| **Priority** | Critical |
+| **Type** | Lifecycle |
+| **Status** | ✅ PASSED |
+
+#### Prerequisites
+- Federation established (P21/P22 completed)
+- Test workload deployed with ClusterSPIFFEID having `federatesWith`
+
+#### Test Steps
+
+```bash
+# === Step 1: Document current workload entry ===
+POD_UID=$(oc get pod -n federation-test -l app=federation-test -o jsonpath='{.items[0].metadata.uid}')
+echo "Current Pod UID: $POD_UID"
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show -selector k8s:pod-uid:${POD_UID}
+
+# === Step 2: Delete workload pod ===
+oc delete pod -n federation-test -l app=federation-test
+echo "Pod deleted at: $(date)"
+
+# === Step 3: Wait for new pod ===
+oc wait -n federation-test --for=condition=Ready pod -l app=federation-test --timeout=120s
+echo "New pod ready at: $(date)"
+
+# === Step 4: Verify NEW pod has FederatesWith ===
+NEW_POD_UID=$(oc get pod -n federation-test -l app=federation-test -o jsonpath='{.items[0].metadata.uid}')
+echo "New Pod UID: $NEW_POD_UID"
+sleep 30  # Wait for SPIRE entry creation
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show -selector k8s:pod-uid:${NEW_POD_UID}
+# Expected: FederatesWith present in output
+```
+
+#### Pass Criteria
+- [x] New pod UID is different from old
+- [x] New SPIRE entry created for new pod
+- [x] FederatesWith present in new entry
+- [x] No manual intervention required
+
+#### Test Result: ✅ PASSED (Dec 16, 2025)
+
+**Evidence:** New entry created with Entry ID `cluster1.1ab29b3a-0b46-451b-b941-2b8b1d34822e`, FederatesWith: `apps.ci-ln-gmy2nx2-72292.gcp-2.ci.openshift.org`
+
+---
+
+### W2: SPIRE Agent Pod Restart
+
+| Test ID | W2 |
+|---------|-----|
+| **Title** | Federation Persists After SPIRE Agent Restart |
+| **Priority** | Critical |
+| **Type** | Infrastructure Resilience |
+| **Status** | ✅ PASSED |
+
+#### Test Steps
+
+```bash
+# === Step 1: Find workload's node ===
+WORKLOAD_NODE=$(oc get pod -n federation-test -l app=federation-test -o jsonpath='{.items[0].spec.nodeName}')
+echo "Workload running on: $WORKLOAD_NODE"
+
+# === Step 2: Find SPIRE agent on that node ===
+AGENT_POD=$(oc get pods -n $SPIRE_NS -l app.kubernetes.io/name=spire-agent -o wide | grep $WORKLOAD_NODE | awk '{print $1}')
+echo "Agent pod: $AGENT_POD"
+
+# === Step 3: Delete SPIRE agent pod ===
+oc delete pod -n $SPIRE_NS $AGENT_POD
+echo "Agent deleted at: $(date)"
+
+# === Step 4: Wait for agent recovery ===
+sleep 60
+oc get pods -n $SPIRE_NS -l app.kubernetes.io/name=spire-agent -o wide | grep $WORKLOAD_NODE
+
+# === Step 5: Verify workload entry still exists ===
+POD_UID=$(oc get pod -n federation-test -l app=federation-test -o jsonpath='{.items[0].metadata.uid}')
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show -selector k8s:pod-uid:${POD_UID}
+# Expected: Entry still exists with FederatesWith
+```
+
+#### Pass Criteria
+- [x] Agent pod restarted successfully
+- [x] Workload entry preserved (same Entry ID)
+- [x] FederatesWith field preserved
+- [x] No workload disruption
+
+#### Test Result: ✅ PASSED (Dec 16, 2025)
+
+**Evidence:** Agent restarted (82q2f → 7mjbt), Entry ID `cluster1.1ab29b3a-0b46-451b-b941-2b8b1d34822e` preserved with FederatesWith intact.
+
+---
+
+### W3: Workload Scaling (HPA Simulation)
+
+| Test ID | W3 |
+|---------|-----|
+| **Title** | Federation Applied to All Scaled Replicas |
+| **Priority** | Critical |
+| **Type** | Scaling |
+| **Status** | ✅ PASSED |
+
+#### Test Steps
+
+```bash
+# === Step 1: Current replicas ===
+oc get pods -n federation-test -l app=federation-test
+
+# === Step 2: Scale to 3 replicas ===
+oc scale deployment federation-test-workload -n federation-test --replicas=3
+
+# === Step 3: Wait for all pods ready ===
+sleep 60
+oc get pods -n federation-test -l app=federation-test
+
+# === Step 4: Check SPIRE entries (ALL should have FederatesWith) ===
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show | grep -B 5 -A 3 "FederatesWith"
+
+# === Step 5: Count entries with FederatesWith ===
+oc exec -n $SPIRE_NS spire-server-0 -c spire-server -- /spire-server entry show | grep "FederatesWith" | wc -l
+# Expected: 3 (one for each pod)
+
+# === Step 6: Scale back to 1 ===
+oc scale deployment federation-test-workload -n federation-test --replicas=1
+```
+
+#### Pass Criteria
+- [x] All 3 pods become Ready
+- [x] 3 SPIRE entries created
+- [x] ALL entries have FederatesWith field
+- [x] 100% success rate for federation config application
+
+#### Test Result: ✅ PASSED (Dec 16, 2025)
+
+**Evidence:**
+- Scaled from 1 to 3 replicas
+- Count of entries with FederatesWith: **3** (100%)
+- All entries pointing to: `apps.ci-ln-gmy2nx2-72292.gcp-2.ci.openshift.org`
+
+---
+
+### Workload Lifecycle Tests Summary
+
+| Test | Scenario | Status | Customer Impact |
+|------|----------|--------|-----------------|
+| W1 | Pod Restart | ✅ PASSED | Pod failures don't break federation |
+| W2 | Agent Restart | ✅ PASSED | Infrastructure issues don't affect federation |
+| W3 | Scaling (HPA) | ✅ PASSED | Auto-scaling works seamlessly with federation |
+
+**Overall: 3/3 PASSED (100%)**
+
+---
+
+*Workload Lifecycle Tests added: December 16, 2025*
 
 ---
 

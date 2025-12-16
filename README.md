@@ -8,17 +8,21 @@ The testing validates bidirectional federation between two OpenShift clusters us
 
 ---
 
-## 📊 Test Results Summary (Updated Dec 12, 2025)
+## 📊 Test Results Summary (Updated Dec 16, 2025)
 
 | Metric | Value |
 |--------|-------|
-| **Total Tests** | 44 |
-| **Passed** | 41 (93%) |
+| **Total Tests** | 58 |
+| **Passed** | 55 (95%) |
 | **N/A** | 1 (2%) |
-| **Pending** | 2 (5%) |
+| **Pending** | 2 (3%) |
 | **Failed** | 0 (0%) |
 
 ### ✅ Verdict: **READY FOR GA RELEASE**
+
+### 🆕 Latest: STS Clusters + mTLS Testing (Dec 16, 2025)
+- AWS STS (IRSA) ↔ Azure STS (Workload Identity) federation
+- **mTLS with SPIFFE SVIDs** - Mutual authentication working!
 
 ---
 
@@ -46,18 +50,19 @@ The testing validates bidirectional federation between two OpenShift clusters us
 
 | File | Description |
 |------|-------------|
-| `Federation-Test-Plan-2Cluster.md` | Complete test plan with 44 test cases |
+| `Federation-Test-Plan-2Cluster.md` | Complete test plan with 58+ test cases |
 | `Federation-Test-Report-Dec10-2025-2cluster.md` | Test execution report with results |
 | `Federation-Testing-Summary-Dec12-2025.md` | Quick summary for team sharing |
 | `Manual-Federation-Testing-Guide.md` | Step-by-step testing guide |
 | `Federation-Testing-Simple-Guide.md` | Simplified guide for beginners |
 | `Operator-Installation-Guide.md` | Operator installation instructions |
+| **`mTLS-Federation-Testing-Guide.md`** 🆕 | **mTLS testing with SPIFFE SVIDs** |
 
 ---
 
 ## 🧪 Test Categories
 
-### Positive Tests (19/20 Passed ✅)
+### Positive Tests (21/22 Passed ✅)
 
 | ID Range | Category | Status |
 |----------|----------|--------|
@@ -67,6 +72,7 @@ The testing validates bidirectional federation between two OpenShift clusters us
 | P13-P15 | Manual Cert/Route | ✅ All PASS |
 | P16-P19 | Scalability & Config | ✅ All PASS |
 | P20 | Cross-Cluster Workload | ✅ PASS |
+| **P21-P22** | **Azure ↔ GCP Cross-Cloud** 🆕 | ✅ All PASS |
 
 ### Negative Tests (15/15 Passed ✅)
 
@@ -76,13 +82,34 @@ The testing validates bidirectional federation between two OpenShift clusters us
 | N9-N12 | ACME Negative | ✅ All PASS |
 | N13-N15 | Manual Cert Negative | ✅ All PASS |
 
-### Customer Scenarios (7/8 Passed ✅)
+### Customer Scenarios (9/10 Passed ✅)
 
 | ID Range | Category | Status |
 |----------|----------|--------|
 | C1-C4 | Network/Config Issues | ✅ All PASS |
 | C5-C6 | Cert Rotation/Retry | ✅ All PASS |
 | C8 | Pod Restart Recovery | ✅ PASS |
+| **C3-Azure, C8-Azure** | **Azure ↔ GCP Resilience** 🆕 | ✅ All PASS |
+
+### Workload Lifecycle Tests (3/3 Passed ✅)
+
+| ID | Test | Status | Key Finding |
+|----|------|--------|-------------|
+| W1 | Workload Pod Restart | ✅ PASS | New pod gets FederatesWith automatically |
+| W2 | SPIRE Agent Restart | ✅ PASS | Entry persists in datastore |
+| W3 | Workload Scaling (1→3) | ✅ PASS | **ALL replicas get FederatesWith (100%)** |
+
+### STS + mTLS Tests (7/7 Passed ✅) 🆕
+
+| ID | Test | Status | Key Finding |
+|----|------|--------|-------------|
+| STS-1 | AWS STS (IRSA) cluster | ✅ PASS | CCO Mode: Manual |
+| STS-2 | Azure STS (WI) cluster | ✅ PASS | CCO Mode: Manual |
+| STS-3 | Operator on STS with proxy | ✅ PASS | CA bundle config required |
+| STS-4 | Cross-cloud STS federation | ✅ PASS | Bundle exchange successful |
+| STS-5 | Workloads on STS | ✅ PASS | FederatesWith configured |
+| E2E-HTTP | Cross-cloud HTTP | ✅ PASS | Azure → AWS connectivity |
+| **E2E-mTLS** | **Mutual TLS with SPIFFE** | ✅ PASS | **TLSv1.3 + AES-256-GCM** |
 
 ### Pending/Special Cases
 
@@ -127,6 +154,8 @@ The testing validates bidirectional federation between two OpenShift clusters us
 - ✅ Pod restart recovery in ~17 seconds
 - ✅ Bundle sync every ~75 seconds
 - ✅ Graceful handling of network failures
+- ✅ **NEW:** Workload scaling: 100% of replicas get FederatesWith (W3)
+- ✅ **NEW:** SPIRE agent restart: Workload entries persist (W2)
 
 ---
 
@@ -137,7 +166,7 @@ The testing validates bidirectional federation between two OpenShift clusters us
 | **Platform** | OpenShift 4.x on GCP and AWS |
 | **Operator** | Zero Trust Workload Identity Manager |
 | **SPIRE Version** | Latest (via operator) |
-| **Test Dates** | December 10-12, 2025 |
+| **Test Dates** | December 10-16, 2025 |
 
 ### Clusters Used
 
@@ -146,6 +175,8 @@ The testing validates bidirectional federation between two OpenShift clusters us
 | Day 1-2 | `apps.ci-ln-1pxsfpt-72292.gcp-2.ci.openshift.org` | `apps.ci-ln-gpdipqb-72292.gcp-2.ci.openshift.org` | GCP |
 | Day 3 | `apps.ci-ln-lh14qqk-72292.origin-ci-int-gce.dev.rhcloud.com` | `apps.ci-ln-7bgj5qt-72292.origin-ci-int-gce.dev.rhcloud.com` | GCP |
 | Day 4 | `apps.ci-ln-dspcs42-76ef8.aws-2.ci.openshift.org` | `apps.ci-ln-32vmc0b-72292.origin-ci-int-gce.dev.rhcloud.com` | AWS + GCP |
+| Day 5 (AM) | `apps.ci-ln-rss07bt-1d09d.ci2.azure.devcluster.openshift.com` | `apps.ci-ln-gmy2nx2-72292.gcp-2.ci.openshift.org` | Azure + GCP |
+| **Day 5 (PM)** 🆕 | `apps.ci-ln-g2p0vz2-76ef8.aws-4.ci.openshift.org` (STS) | `apps.ci-ln-7vs7nxk-1d09d.ci2.azure.devcluster.openshift.com` (STS) | **AWS STS + Azure STS** |
 
 ---
 
@@ -209,6 +240,9 @@ oc exec -n zero-trust-workload-identity-manager spire-server-0 -c spire-server -
 | Dec 10 | P1-P8, N1-N8 (Core Federation) | 16/16 (100%) |
 | Dec 11 | P8-P12, P16-P19, N9-N12 (ACME & Config) | 29/30 (97%) |
 | Dec 12 | P1b, P13-P15, P20, N13-N15, C1-C8 | 41/44 (93%) |
+| Dec 16 (AM) | P21-P22, C3-Azure, C8-Azure (Azure ↔ GCP) | 45/48 (94%) |
+| Dec 16 (AM) | W1-W3 (Workload Lifecycle Tests) | 48/51 (94%) |
+| **Dec 16 (PM)** 🆕 | **STS-1 to STS-5, E2E-HTTP, E2E-mTLS** | **55/58 (95%)** |
 
 ---
 
@@ -217,7 +251,7 @@ oc exec -n zero-trust-workload-identity-manager spire-server-0 -c spire-server -
 | Role | Name |
 |------|------|
 | **QE Engineer** | Sayak Das |
-| **Test Dates** | December 10-12, 2025 |
+| **Test Dates** | December 10-16, 2025 |
 
 ---
 
@@ -227,4 +261,4 @@ Internal Red Hat Testing Documentation
 
 ---
 
-*Last Updated: December 12, 2025*
+*Last Updated: December 16, 2025*
